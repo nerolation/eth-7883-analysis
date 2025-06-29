@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--enrich-txs", action="store_true", 
                        help="Enrich with transaction data from Xatu")
     parser.add_argument("--max-tx-blocks", type=int, default=10000, help="Max blocks for transaction enrichment")
-    parser.add_argument("--tx-batch-size", type=int, default=500, help="Batch size for transaction queries")
+    parser.add_argument("--tx-batch-size", type=int, default=50, help="Batch size for transaction queries")
     parser.add_argument("--quick", action="store_true",
                        help="Quick analysis with limited data")
     

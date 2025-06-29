@@ -61,16 +61,16 @@ def enrich_with_transaction_data(
     
     # Convert transaction hashes to list and batch them
     modexp_tx_list = list(modexp_txs)
-    tx_batch_size = min(batch_size, 500)  # Limit to avoid query length issues
+    tx_batch_size = min(batch_size, 50)  # Start with conservative batch size
     
     print(f"Processing {len(modexp_tx_list):,} transactions in batches of {tx_batch_size}")
     
-    for i in range(0, len(modexp_tx_list), tx_batch_size):
+    i = 0
+    while i < len(modexp_tx_list):
         batch_txs = modexp_tx_list[i:i + tx_batch_size]
         tx_hash_list = "'" + "','".join(batch_txs) + "'"
         
-        print(f"Querying batch {i//tx_batch_size + 1}/{(len(modexp_tx_list)-1)//tx_batch_size + 1}: "
-              f"{len(batch_txs)} transactions")
+        print(f"Querying batch {i//tx_batch_size + 1}: {len(batch_txs)} transactions")
         
         query = query_template.format(min_block, max_block, tx_hash_list)
         
@@ -87,33 +87,54 @@ def enrich_with_transaction_data(
                 print(f"  Found {len(result)} matching transactions")
             else:
                 print(f"  No transactions found for this batch")
+            
+            # Move to next batch
+            i += tx_batch_size
                 
         except Exception as e:
-            print(f"Error querying transaction batch {i//tx_batch_size + 1}: {e}")
-            # Try fallback query without transaction hash filter for this batch
-            try:
-                fallback_query = f"""
-                SELECT 
-                    block_number, 
-                    transaction_hash as tx_hash, 
-                    from_address, 
-                    to_address, 
-                    value, 
-                    gas_used, 
-                    gas_price, 
-                    transaction_type 
-                FROM canonical_execution_transaction
-                WHERE meta_network_name = 'mainnet' 
-                    AND block_number >= {min_block} 
-                    AND block_number <= {max_block}
-                """
-                result = xatu_client.execute_query(fallback_query)
-                result = result[result["tx_hash"].isin(batch_txs)]
-                if len(result) > 0:
-                    tx_results.append(result)
-                    print(f"  Fallback query found {len(result)} transactions")
-            except Exception as e2:
-                print(f"  Fallback query also failed: {e2}")
+            error_str = str(e).lower()
+            if "414" in error_str or "request-uri too large" in error_str or "url too long" in error_str:
+                # URL too long - reduce batch size and retry
+                if tx_batch_size > 1:
+                    tx_batch_size = max(1, tx_batch_size // 2)
+                    print(f"  URL too long, reducing batch size to {tx_batch_size} and retrying...")
+                    continue  # Retry same batch with smaller size
+                else:
+                    print(f"  Cannot reduce batch size further, skipping this transaction")
+                    i += 1
+            else:
+                print(f"Error querying transaction batch: {e}")
+                # Try fallback query for individual transactions in this batch
+                fallback_results = []
+                for tx in batch_txs:
+                    try:
+                        fallback_query = f"""
+                        SELECT 
+                            block_number, 
+                            transaction_hash as tx_hash, 
+                            from_address, 
+                            to_address, 
+                            value, 
+                            gas_used, 
+                            gas_price, 
+                            transaction_type 
+                        FROM canonical_execution_transaction
+                        WHERE meta_network_name = 'mainnet' 
+                            AND transaction_hash = '{tx}'
+                        """
+                        result = xatu_client.execute_query(fallback_query)
+                        if len(result) > 0:
+                            fallback_results.append(result)
+                    except Exception as e2:
+                        print(f"  Fallback query failed for {tx[:10]}...: {e2}")
+                
+                if fallback_results:
+                    combined_result = pd.concat(fallback_results, ignore_index=True)
+                    tx_results.append(combined_result)
+                    print(f"  Fallback queries found {len(combined_result)} transactions")
+                
+                # Move to next batch
+                i += tx_batch_size
             
     if tx_results:
         tx_df = pd.concat(tx_results, ignore_index=True)
