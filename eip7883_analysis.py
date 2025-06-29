@@ -90,8 +90,8 @@ class ModExpDataAnalyzer:
         self.df = None
         self.tx_data = None
         
-    def load_modexp_data(self, limit: Optional[int] = None) -> pd.DataFrame:
-        """Load ModExp call data from parquet files"""
+    def load_modexp_data(self, limit: Optional[int] = None, batch_size: int = 1000) -> pd.DataFrame:
+        """Load ModExp call data from parquet files with robust error handling"""
         print(f"Loading ModExp data from {self.data_dir}")
         
         parquet_files = sorted(
@@ -100,20 +100,48 @@ class ModExpDataAnalyzer:
             reverse=True
         )
         
-        if limit:
+        total_files = len(parquet_files)
+        print(f"Found {total_files:,} parquet files")
+        
+        if limit and limit < total_files:
             parquet_files = parquet_files[:limit]
+            print(f"Limited to {limit:,} files")
             
         dfs = []
-        for i, file in enumerate(parquet_files):
-            if i % 100 == 0:
-                print(f"Processing file {i+1}/{len(parquet_files)}: {file.name}")
+        failed_files = []
+        
+        # Process files in batches to manage memory
+        for batch_start in range(0, len(parquet_files), batch_size):
+            batch_end = min(batch_start + batch_size, len(parquet_files))
+            batch_files = parquet_files[batch_start:batch_end]
+            
+            print(f"Processing batch {batch_start//batch_size + 1}/{(len(parquet_files)-1)//batch_size + 1}: "
+                  f"files {batch_start+1} to {batch_end} ({len(batch_files)} files)")
+            
+            batch_dfs = []
+            for file in batch_files:
+                try:
+                    df = pd.read_parquet(file)
+                    if len(df) > 0:  # Only include non-empty files
+                        df["block_number"] = int(file.stem)
+                        batch_dfs.append(df)
+                except Exception as e:
+                    print(f"WARNING: Failed to load {file.name}: {e}")
+                    failed_files.append(file.name)
+                    
+            if batch_dfs:
+                batch_df = pd.concat(batch_dfs, ignore_index=True)
+                dfs.append(batch_df)
                 
-            df = pd.read_parquet(file)
-            df["block_number"] = int(file.stem)
-            dfs.append(df)
+        if not dfs:
+            raise ValueError("No valid ModExp data found")
             
         self.df = pd.concat(dfs, ignore_index=True)
-        print(f"Loaded {len(self.df)} ModExp calls from {len(parquet_files)} blocks")
+        
+        if failed_files:
+            print(f"WARNING: Failed to load {len(failed_files)} files: {failed_files[:5]}...")
+            
+        print(f"Successfully loaded {len(self.df):,} ModExp calls from {len(parquet_files)-len(failed_files):,} blocks")
         
         # Calculate gas costs
         self._calculate_gas_costs()

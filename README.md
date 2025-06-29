@@ -1,6 +1,6 @@
 # EIP-7883 ModExp Gas Cost Analysis
 
-Empirical analysis of the impact of EIP-7883 on Ethereum's ModExp precompile gas costs.
+Empirical analysis of the impact of EIP-7883 on Ethereum's ModExp precompile gas costs, optimized for large-scale datasets (64,000+ files).
 
 ## Overview
 
@@ -13,36 +13,56 @@ EIP-7883 proposes changes to the ModExp precompile pricing to address underprici
 
 ## Quick Start
 
-### Basic Analysis
+### Large-Scale Analysis (64,000+ files)
 ```bash
-python run_analysis.py --data-dir modexp/modexp --output-dir analysis_output
+# Optimized for large datasets
+python run_analysis.py --data-dir modexp/modexp --batch-size 2000
+
+# With transaction enrichment (limited for efficiency)
+python run_analysis.py --data-dir modexp/modexp --enrich-txs --max-tx-blocks 5000 --tx-batch-size 250
 ```
 
-### Full Analysis with Transaction Data
+### Standard Analysis
 ```bash
-python run_analysis.py --data-dir modexp/modexp --output-dir analysis_output --enrich-txs
+# Specific number of files
+python run_analysis.py --data-dir modexp/modexp --limit 1000 --batch-size 500
+
+# Quick test
+python run_analysis.py --quick
 ```
 
-### Interactive Analysis
+### Entity Impact Analysis
 ```bash
-jupyter notebook eip7883_interactive_analysis.ipynb
+# Analyze impact on different user types
+python entity_analysis.py
 ```
+
+## Performance Optimizations
+
+This analysis is optimized for handling very large datasets:
+
+- **Batched Processing**: Handles 64,000+ files efficiently with configurable batch sizes
+- **Memory Management**: Processes data in batches to prevent memory issues
+- **Targeted Queries**: Optimized pyxatu queries using transaction hash filtering
+- **Compressed Output**: Uses parquet format for large datasets
+- **Robust Error Handling**: Continues processing despite individual file failures
 
 ## Usage
 
 ### Command Line Analysis
 
-The main analysis script supports several options:
-
 ```bash
 python run_analysis.py [OPTIONS]
 
 Options:
-  --data-dir PATH      Directory containing ModExp parquet files (default: modexp/modexp)
-  --output-dir PATH    Output directory for results (default: analysis_output)
-  --limit N           Limit number of files to process
-  --enrich-txs        Enrich with transaction data from Xatu
-  --quick             Quick analysis with limited data (100 files)
+  --data-dir PATH        Directory containing ModExp parquet files (default: modexp/modexp)
+  --output-dir PATH      Output directory for results (default: analysis_output)
+  --limit N             Limit number of files to process
+  --batch-size N        Batch size for file processing (default: 1000)
+  --enrich-txs          Enrich with transaction data from Xatu
+  --max-tx-blocks N     Max blocks for transaction enrichment (default: 10000)
+  --tx-batch-size N     Batch size for transaction queries (default: 500)
+  --quick               Quick analysis with limited data (100 files)
 ```
 
 ### Custom Data Directory
