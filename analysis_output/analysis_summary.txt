@@ -1,12 +1,12 @@
 EIP-7883 ModExp Analysis Summary
 ========================================
 
-Analysis completed: 2025-06-29 16:49:58
-Total processing time: 496.4 seconds
+Analysis completed: 2025-06-29 17:11:34
+Total processing time: 745.6 seconds
 
 Performance:
-  Data loading: 59.3s
-  Transaction enrichment: 436.7s
+  Data loading: 58.8s
+  Transaction enrichment: 686.5s
   Analysis: 0.1s
 
 Results:

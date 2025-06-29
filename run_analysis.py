@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 Main script to run EIP-7883 analysis optimized for large datasets
+
+Transaction Enrichment Strategies:
+- block_range: Query all transactions in block range, filter afterwards (fast for dense ModExp usage)
+- tx_hash: Query specific transaction hashes only (efficient for sparse ModExp usage)  
+- hybrid: Automatically select best strategy based on transaction density (default)
 """
 
 import os
@@ -26,6 +31,9 @@ def main():
                        help="Enrich with transaction data from Xatu")
     parser.add_argument("--max-tx-blocks", type=int, default=10000, help="Max blocks for transaction enrichment")
     parser.add_argument("--tx-batch-size", type=int, default=50, help="Batch size for transaction queries")
+    parser.add_argument("--tx-strategy", type=str, default="hybrid", 
+                       choices=["block_range", "tx_hash", "hybrid"],
+                       help="Transaction enrichment strategy: block_range (fast for dense data), tx_hash (efficient for sparse data), hybrid (auto-select)")
     parser.add_argument("--quick", action="store_true",
                        help="Quick analysis with limited data")
     
@@ -65,7 +73,8 @@ def main():
                 analyzer.df, 
                 xatu, 
                 batch_size=args.tx_batch_size,
-                max_blocks=args.max_tx_blocks
+                max_blocks=args.max_tx_blocks,
+                strategy=args.tx_strategy
             )
             enrich_time = time.time() - enrich_start
             print(f"Transaction data enrichment complete in {enrich_time:.1f} seconds")
@@ -111,15 +120,37 @@ def main():
         
         f.write("Results:\n")
         for key, value in results.items():
-            if key != "top_impacted_addresses":
+            if key not in ["top_impacted_senders", "top_impacted_contracts", "usage_patterns", "cost_percentiles"]:
                 f.write(f"  {key}: {value}\n")
     
     # Save entity analysis results if available
     if "top_impacted_senders" in results and results["top_impacted_senders"] is not None:
         results["top_impacted_senders"].to_csv(output_path / "top_impacted_senders.csv")
+        print(f"- top_impacted_senders.csv")
         
     if "top_impacted_contracts" in results and results["top_impacted_contracts"] is not None:
         results["top_impacted_contracts"].to_csv(output_path / "top_impacted_contracts.csv")
+        print(f"- top_impacted_contracts.csv")
+    
+    # Export top_impacted_addresses.csv (combination of senders and contracts)
+    if "top_impacted_senders" in results and "top_impacted_contracts" in results:
+        # Combine senders and contracts for a unified top addresses view
+        senders_df = results["top_impacted_senders"].copy()
+        senders_df['address'] = senders_df.index
+        senders_df['type'] = 'sender'
+        
+        contracts_df = results["top_impacted_contracts"].copy() 
+        contracts_df['address'] = contracts_df.index
+        contracts_df['type'] = 'contract'
+        
+        # Combine and sort by total_increase
+        combined_df = pd.concat([
+            senders_df[['address', 'type', 'total_increase', 'avg_increase', 'call_count']],
+            contracts_df[['address', 'type', 'total_increase', 'avg_increase', 'call_count']]
+        ]).sort_values('total_increase', ascending=False)
+        
+        combined_df.to_csv(output_path / "top_impacted_addresses.csv", index=False)
+        print(f"- top_impacted_addresses.csv")
     
     # Perform enhanced entity analysis if transaction data available
     try:
@@ -149,16 +180,47 @@ def main():
     
     print(f"Export completed in {export_time:.1f} seconds")
     print(f"\nTotal analysis time: {total_time:.1f} seconds")
-    print(f"Results saved to {args.output_dir}/:")
+    print(f"\nResults saved to {args.output_dir}/:")
     print(f"- modexp_analysis_data.parquet (compressed)")
     if len(analyzer.df) < 100000:
         print(f"- modexp_analysis_data.csv (readable)")
     print(f"- analysis_summary.txt (summary)")
     
-    if "top_impacted_senders" in results:
-        print(f"- top_impacted_senders.csv (sender analysis)")
-    if "top_impacted_contracts" in results:
-        print(f"- top_impacted_contracts.csv (contract analysis)")
+    # Generate visualizations
+    print("\nGenerating visualizations...")
+    try:
+        viz_start = time.time()
+        analyzer.create_visualizations(args.output_dir)
+        viz_time = time.time() - viz_start
+        print(f"Visualizations completed in {viz_time:.1f} seconds")
+        print(f"- Interactive charts saved to {args.output_dir}/")
+    except Exception as e:
+        print(f"Warning: Could not generate visualizations: {e}")
+    
+    # Generate markdown reports
+    print("\nGenerating markdown reports...")
+    try:
+        from eip7883_analysis import generate_report
+        report_path = output_path / "eip7883_analysis_report.md"
+        generate_report(analyzer, str(report_path))
+        print(f"- eip7883_analysis_report.md (detailed markdown report)")
+    except Exception as e:
+        print(f"Warning: Could not generate detailed markdown report: {e}")
+    
+    # Generate comprehensive report if generate_markdown_report.py exists
+    try:
+        import subprocess
+        result = subprocess.run([
+            "python3", "generate_markdown_report.py", 
+            "--analysis-dir", args.output_dir,
+            "--output", "eip7883_comprehensive_analysis.md"
+        ], capture_output=True, text=True, cwd=".")
+        if result.returncode == 0:
+            print(f"- eip7883_comprehensive_analysis.md (comprehensive report with Etherscan links)")
+        else:
+            print(f"Warning: Could not generate comprehensive report: {result.stderr}")
+    except Exception as e:
+        print(f"Warning: Could not generate comprehensive report: {e}")
     
 
 if __name__ == "__main__":

@@ -1,267 +1,223 @@
 #!/usr/bin/env python3
 """
 Generate comprehensive markdown analysis report from EIP-7883 analysis outputs
+Combines data from analysis_output directory with optional direct analysis report
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
+import csv
+import json
 import argparse
+from pathlib import Path
 from datetime import datetime
 
 
-def load_analysis_data(analysis_dir: str) -> dict:
-    """Load all analysis outputs from the analysis directory"""
-    analysis_path = Path(analysis_dir)
-    data = {}
+def load_csv_data(file_path: Path) -> list:
+    """Load CSV data into list of dictionaries"""
+    if not file_path.exists():
+        return []
     
-    # Load main analysis data
-    data_file = analysis_path / "modexp_analysis_data.csv"
-    if data_file.exists():
-        data['main_data'] = pd.read_csv(data_file)
-        print(f"Loaded {len(data['main_data'])} ModExp calls")
-    
-    # Load summary data
-    summary_file = analysis_path / "analysis_summary.txt"
-    if summary_file.exists():
-        with open(summary_file, 'r') as f:
-            data['summary'] = f.read()
-    
-    # Load top impacted entities
-    for entity_type in ['senders', 'contracts']:
-        file_path = analysis_path / f"top_impacted_{entity_type}.csv"
-        if file_path.exists():
-            data[f'top_{entity_type}'] = pd.read_csv(file_path)
-    
-    # Load detailed analyses  
-    for analysis_type in ['sender', 'contract']:
-        file_path = analysis_path / f"detailed_{analysis_type}_analysis.csv"
-        if file_path.exists():
-            data[f'detailed_{analysis_type}'] = pd.read_csv(file_path)
-    
-    # Load sender-contract pairs
-    pairs_file = analysis_path / "sender_contract_pairs.csv"
-    if pairs_file.exists():
-        data['pairs'] = pd.read_csv(pairs_file)
-    
-    return data
+    with open(file_path, 'r') as f:
+        reader = csv.DictReader(f)
+        return list(reader)
 
 
-def extract_summary_stats(summary_text: str) -> dict:
-    """Extract key statistics from summary text"""
+def parse_summary_file(file_path: Path) -> dict:
+    """Parse the analysis summary text file"""
+    if not file_path.exists():
+        return {}
+    
     stats = {}
+    with open(file_path, 'r') as f:
+        content = f.read()
     
-    lines = summary_text.split('\n')
+    lines = content.split('\n')
     for line in lines:
-        if ':' in line and any(key in line for key in ['total_calls', 'unique_transactions', 'avg_cost_increase', 
-                                                       'median_cost_increase', 'max_cost_increase', 'total_cost_increase',
-                                                       'calls_with_increase', 'pct_calls_affected']):
-            key, value = line.split(':', 1)
-            key = key.strip()
-            value = value.strip()
-            
-            # Parse numeric values
+        if ':' in line and any(key in line for key in [
+            'total_calls', 'unique_transactions', 'avg_cost_increase', 
+            'median_cost_increase', 'max_cost_increase', 'total_cost_increase',
+            'calls_with_increase', 'pct_calls_affected', 'block_range'
+        ]):
             try:
-                if '.' in value:
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+                
+                # Handle special cases
+                if 'block_range' in key:
+                    stats[key] = value
+                elif '.' in value:
                     stats[key] = float(value)
                 else:
                     stats[key] = int(value)
             except:
-                stats[key] = value
+                continue
     
     return stats
 
 
-def analyze_modexp_usage(df: pd.DataFrame) -> dict:
-    """Analyze how ModExp is used based on input patterns"""
-    usage_analysis = {}
-    
-    # Input size analysis
-    usage_analysis['input_sizes'] = {
-        'base_sizes': df['Bsize'].describe(),
-        'exponent_sizes': df['Esize'].describe(), 
-        'modulus_sizes': df['Msize'].describe()
-    }
-    
-    # Common input patterns
-    usage_analysis['common_patterns'] = {
-        'all_32_bytes': len(df[(df['Bsize'] == 32) & (df['Esize'] == 32) & (df['Msize'] == 32)]),
-        'large_exponents': len(df[df['Esize'] > 32]),
-        'large_modulus': len(df[df['Msize'] > 32]),
-        'large_base': len(df[df['Bsize'] > 32])
-    }
-    
-    # Gas cost patterns
-    usage_analysis['gas_patterns'] = {
-        'min_cost': df['gas_costs'].min(),
-        'max_cost': df['gas_costs'].max(),
-        'most_common_cost': df['gas_costs'].mode().iloc[0] if len(df['gas_costs'].mode()) > 0 else None,
-        'cost_distribution': df['gas_costs'].value_counts().head(10)
-    }
-    
-    # Usage by transaction
-    if 'tx_hash' in df.columns:
-        tx_usage = df.groupby('tx_hash').size()
-        usage_analysis['transaction_patterns'] = {
-            'calls_per_tx': tx_usage.describe(),
-            'max_calls_single_tx': tx_usage.max(),
-            'txs_with_multiple_calls': len(tx_usage[tx_usage > 1])
-        }
-    
-    return usage_analysis
+def format_number(num):
+    """Format numbers with commas"""
+    if isinstance(num, (int, float)):
+        return f"{num:,.0f}" if num == int(num) else f"{num:,.2f}"
+    return str(num)
 
 
-def calculate_percentiles(df: pd.DataFrame) -> dict:
-    """Calculate percentiles for cost increases"""
-    increases = df[df['cost_increase'] > 0]['cost_increase']
+def generate_comprehensive_report(analysis_dir: Path, output_file: str):
+    """Generate comprehensive markdown report from analysis outputs"""
     
-    if len(increases) == 0:
-        return {'no_increases': True}
+    # Load data from analysis directory
+    summary_stats = parse_summary_file(analysis_dir / "analysis_summary.txt")
+    top_senders = load_csv_data(analysis_dir / "top_impacted_senders.csv")
+    top_contracts = load_csv_data(analysis_dir / "top_impacted_contracts.csv")
+    main_data = load_csv_data(analysis_dir / "modexp_analysis_data.csv")
     
-    percentiles = {}
-    for p in [10, 25, 50, 75, 90, 95, 99]:
-        percentiles[f'p{p}'] = np.percentile(increases, p)
+    # Check if we have an existing analysis report to incorporate
+    existing_report = ""
+    report_files = list(analysis_dir.glob("*analysis_report.md"))
+    if report_files:
+        with open(report_files[0], 'r') as f:
+            existing_report = f.read()
     
-    # Cost ratio percentiles
-    ratios = df[df['cost_increase'] > 0]['cost_ratio']
-    percentiles['ratio_percentiles'] = {}
-    for p in [50, 75, 90, 95, 99]:
-        percentiles['ratio_percentiles'][f'p{p}'] = np.percentile(ratios, p)
-    
-    return percentiles
-
-
-def generate_markdown_report(data: dict, output_file: str):
-    """Generate comprehensive markdown report"""
-    
-    # Extract key statistics
-    stats = extract_summary_stats(data.get('summary', ''))
-    df = data.get('main_data')
-    
-    report = f"""# EIP-7883 ModExp Precompile Analysis Report
+    # Start building the comprehensive report
+    report = f"""# EIP-7883 ModExp Analysis Report
 
 *Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
 
 ## Executive Summary
 
-This report provides a comprehensive analysis of the impact of EIP-7883 on the ModExp precompile based on historical Ethereum mainnet data.
+EIP-7883 impact analysis based on historical Ethereum mainnet data with statistical and entity-level insights.
 
 ### Key Findings
 
-- **Total ModExp calls analyzed**: {stats.get('total_calls', 'N/A'):,}
-- **Unique transactions**: {stats.get('unique_transactions', 'N/A'):,}
-- **Calls with cost increases**: {stats.get('calls_with_increase', 'N/A'):,} ({stats.get('pct_calls_affected', 0):.1f}% of all calls)
-- **Total additional gas required**: {stats.get('total_cost_increase', 'N/A'):,} gas
-- **Average cost increase**: {stats.get('avg_cost_increase', 0):.0f} gas per affected call
-- **Maximum single call increase**: {stats.get('max_cost_increase', 'N/A'):,} gas
+- **Total ModExp calls analyzed**: {format_number(summary_stats.get('total_calls', 'N/A'))}
+- **Unique transactions**: {format_number(summary_stats.get('unique_transactions', 'N/A'))}
+- **Calls with cost increases**: {format_number(summary_stats.get('calls_with_increase', 'N/A'))} ({summary_stats.get('pct_calls_affected', 0):.1f}% of all calls)
+- **Total additional gas required**: {format_number(summary_stats.get('total_cost_increase', 'N/A'))} gas
+- **Average cost increase per affected call**: {format_number(summary_stats.get('avg_cost_increase', 0))} gas
+- **Maximum single call increase**: {format_number(summary_stats.get('max_cost_increase', 'N/A'))} gas
 
-## ModExp Usage Patterns
+## Entity Analysis
 
-"""
-    
-    if df is not None:
-        usage = analyze_modexp_usage(df)
+### Most Impacted Senders
+
+Addresses with highest total gas cost increases:
+
+| Rank | Address | Total Increase (gas) | Avg Increase | Call Count | Current Total Cost | New Total Cost |
+|------|---------|---------------------|--------------|------------|-------------------|----------------|"""
+
+    # Add top senders
+    for i, sender in enumerate(top_senders[:10], 1):
+        addr = sender.get('from_address', 'N/A')
+        total_inc = format_number(float(sender.get('total_increase', 0)))
+        avg_inc = format_number(float(sender.get('avg_increase', 0)))
+        call_count = format_number(int(sender.get('call_count', 0)))
+        old_cost = format_number(float(sender.get('total_old_cost', 0)))
+        new_cost = format_number(float(sender.get('total_new_cost', 0)))
         
-        report += f"""### Input Size Distribution
+        report += f"\n| {i} | [{addr[:10]}...](https://etherscan.io/address/{addr}) | {total_inc} | {avg_inc} | {call_count} | {old_cost} | {new_cost} |"
 
-The ModExp precompile is used with the following input size patterns:
-
-**Base (B) sizes:**
-- Mean: {usage['input_sizes']['base_sizes']['mean']:.1f} bytes
-- Median: {usage['input_sizes']['base_sizes']['50%']:.0f} bytes  
-- Max: {usage['input_sizes']['base_sizes']['max']:.0f} bytes
-
-**Exponent (E) sizes:**
-- Mean: {usage['input_sizes']['exponent_sizes']['mean']:.1f} bytes
-- Median: {usage['input_sizes']['exponent_sizes']['50%']:.0f} bytes
-- Max: {usage['input_sizes']['exponent_sizes']['max']:.0f} bytes
-
-**Modulus (M) sizes:**
-- Mean: {usage['input_sizes']['modulus_sizes']['mean']:.1f} bytes  
-- Median: {usage['input_sizes']['modulus_sizes']['50%']:.0f} bytes
-- Max: {usage['input_sizes']['modulus_sizes']['max']:.0f} bytes
-
-### Common Usage Patterns
-
-- **Standard 32-byte inputs**: {usage['common_patterns']['all_32_bytes']:,} calls ({100*usage['common_patterns']['all_32_bytes']/len(df):.1f}%)
-- **Large exponents (>32 bytes)**: {usage['common_patterns']['large_exponents']:,} calls  
-- **Large modulus (>32 bytes)**: {usage['common_patterns']['large_modulus']:,} calls
-- **Large base (>32 bytes)**: {usage['common_patterns']['large_base']:,} calls
-
-### Gas Cost Patterns  
-
-- **Minimum cost**: {usage['gas_patterns']['min_cost']:,} gas
-- **Maximum cost**: {usage['gas_patterns']['max_cost']:,} gas
-- **Most common cost**: {usage['gas_patterns']['most_common_cost']:,} gas
-
-**Top 5 most common gas costs:**
-"""
-        
-        for cost, count in usage['gas_patterns']['cost_distribution'].head(5).items():
-            pct = 100 * count / len(df)
-            report += f"- {cost:,} gas: {count:,} calls ({pct:.1f}%)\n"
-        
-        if 'transaction_patterns' in usage:
-            report += f"""
-### Transaction Usage Patterns
-
-- **Average calls per transaction**: {usage['transaction_patterns']['calls_per_tx']['mean']:.1f}
-- **Maximum calls in single transaction**: {usage['transaction_patterns']['max_calls_single_tx']:,}
-- **Transactions with multiple ModExp calls**: {usage['transaction_patterns']['txs_with_multiple_calls']:,}
-"""
-
-    # Cost increase analysis
-    if df is not None:
-        percentiles = calculate_percentiles(df)
-        
-        if not percentiles.get('no_increases'):
-            report += f"""
-## EIP-7883 Cost Impact Analysis
-
-### Cost Increase Distribution
-
-**Gas cost increase percentiles (for affected calls only):**
-- 10th percentile: {percentiles['p10']:.0f} gas
-- 25th percentile: {percentiles['p25']:.0f} gas  
-- 50th percentile (median): {percentiles['p50']:.0f} gas
-- 75th percentile: {percentiles['p75']:.0f} gas
-- 90th percentile: {percentiles['p90']:.0f} gas
-- 95th percentile: {percentiles['p95']:.0f} gas
-- 99th percentile: {percentiles['p99']:.0f} gas
-
-**Cost ratio percentiles (EIP-7883 cost / current cost):**
-- 50th percentile: {percentiles['ratio_percentiles']['p50']:.2f}x
-- 75th percentile: {percentiles['ratio_percentiles']['p75']:.2f}x
-- 90th percentile: {percentiles['ratio_percentiles']['p90']:.2f}x
-- 95th percentile: {percentiles['ratio_percentiles']['p95']:.2f}x
-- 99th percentile: {percentiles['ratio_percentiles']['p99']:.2f}x
-"""
-
-    # Entity analysis
-    if 'top_senders' in data:
-        report += """
-## Most Impacted Entities
-
-### Top Impacted Transaction Senders
-
-| Address | Total Increase (gas) | Avg Increase | Call Count | Total Current Cost | Total New Cost |
-|---------|---------------------|--------------|------------|-------------------|----------------|
-"""
-        for _, row in data['top_senders'].head(10).iterrows():
-            report += f"| `{row['from_address'][:10]}...` | {row['total_increase']:,.0f} | {row['avg_increase']:,.0f} | {row['call_count']:,} | {row['total_old_cost']:,.0f} | {row['total_new_cost']:,.0f} |\n"
-
-    if 'top_contracts' in data:
-        report += """
-### Top Impacted Contracts
-
-| Address | Total Increase (gas) | Avg Increase | Call Count | Unique Users | Total Current Cost | Total New Cost |
-|---------|---------------------|--------------|------------|--------------|-------------------|----------------|
-"""
-        for _, row in data['top_contracts'].head(10).iterrows():
-            report += f"| `{row['to_address'][:10]}...` | {row['total_increase']:,.0f} | {row['avg_increase']:,.0f} | {row['call_count']:,} | {row['unique_users']:,} | {row['total_old_cost']:,.0f} | {row['total_new_cost']:,.0f} |\n"
-
-    # Technical details
     report += """
+
+### Most Impacted Contracts
+
+Contracts with highest total gas cost increases:
+
+| Rank | Contract Address | Total Increase (gas) | Avg Increase | Call Count | Unique Users | Current Total Cost | New Total Cost |
+|------|------------------|---------------------|--------------|------------|--------------|-------------------|----------------|"""
+
+    # Add top contracts  
+    for i, contract in enumerate(top_contracts[:10], 1):
+        addr = contract.get('to_address', 'N/A')
+        total_inc = format_number(float(contract.get('total_increase', 0)))
+        avg_inc = format_number(float(contract.get('avg_increase', 0)))
+        call_count = format_number(int(contract.get('call_count', 0)))
+        unique_users = format_number(int(contract.get('unique_users', 0)))
+        old_cost = format_number(float(contract.get('total_old_cost', 0)))
+        new_cost = format_number(float(contract.get('total_new_cost', 0)))
+        
+        report += f"\n| {i} | [{addr[:10]}...](https://etherscan.io/address/{addr}) | {total_inc} | {avg_inc} | {call_count} | {unique_users} | {old_cost} | {new_cost} |"
+
+    # Add usage analysis if we have main data
+    if main_data:
+        total_calls = len(main_data)
+        
+        # Calculate usage patterns
+        all_32_bytes = sum(1 for row in main_data if 
+                          int(row.get('Bsize', 0)) == 32 and 
+                          int(row.get('Esize', 0)) == 32 and 
+                          int(row.get('Msize', 0)) == 32)
+        large_exp = sum(1 for row in main_data if int(row.get('Esize', 0)) > 32)
+        large_mod = sum(1 for row in main_data if int(row.get('Msize', 0)) > 32)
+        large_base = sum(1 for row in main_data if int(row.get('Bsize', 0)) > 32)
+        
+        # Calculate cost patterns
+        gas_costs = [int(row.get('gas_costs', 0)) for row in main_data]
+        min_cost = min(gas_costs) if gas_costs else 0
+        max_cost = max(gas_costs) if gas_costs else 0
+        
+        # Calculate cost increases
+        increases = [float(row.get('cost_increase', 0)) for row in main_data if float(row.get('cost_increase', 0)) > 0]
+        
+        report += f"""
+
+## Usage Patterns
+
+### Distribution
+
+- **Standard 32-byte inputs**: {format_number(all_32_bytes)} calls ({100*all_32_bytes/total_calls:.1f}%)
+- **Large exponents (>32 bytes)**: {format_number(large_exp)} calls  
+- **Large modulus (>32 bytes)**: {format_number(large_mod)} calls
+- **Large base (>32 bytes)**: {format_number(large_base)} calls
+
+### Gas Costs
+
+- **Range**: {format_number(min_cost)} to {format_number(max_cost)} gas
+- **Total calls**: {format_number(total_calls)}
+
+### Cost Increases
+
+For {format_number(len(increases))} affected calls:"""
+
+        if increases:
+            increases.sort()
+            n = len(increases)
+            percentiles = {
+                10: increases[int(0.1 * n)],
+                25: increases[int(0.25 * n)], 
+                50: increases[int(0.5 * n)],
+                75: increases[int(0.75 * n)],
+                90: increases[int(0.9 * n)],
+                95: increases[int(0.95 * n)],
+                99: increases[int(0.99 * n)]
+            }
+            
+            report += f"""
+
+**Increase percentiles:**
+- 10th percentile: {format_number(percentiles[10])} gas
+- 25th percentile: {format_number(percentiles[25])} gas  
+- 50th percentile (median): {format_number(percentiles[50])} gas
+- 75th percentile: {format_number(percentiles[75])} gas
+- 90th percentile: {format_number(percentiles[90])} gas
+- 95th percentile: {format_number(percentiles[95])} gas
+- 99th percentile: {format_number(percentiles[99])} gas"""
+
+    # Add visualizations section
+    report += """
+
+## Visualizations and Charts
+
+Interactive visualizations have been generated to complement this analysis:
+
+- **`cost_increase_distribution.html`** - Distribution of gas cost increases
+- **`cost_ratio_by_size.html`** - Cost ratios by input parameter sizes  
+- **`cost_timeline.html`** - Gas cost trends over time (if sufficient block range)
+- **`sender_impact.html`** - Top transaction senders by cost increase
+- **`contract_impact.html`** - Top contracts by cost increase
+- **`sender_vs_contract_distribution.html`** - Comparative impact distribution
+
+These charts provide detailed visual analysis of EIP-7883 impact patterns and can be opened in any web browser for interactive exploration.
+
 ## Technical Implementation Details
 
 ### EIP-7883 Changes
@@ -278,77 +234,88 @@ EIP-7883 modifies the ModExp gas calculation in three key ways:
 3. **Minimum Gas Cost**: 
    - Increased from 200 to 500 gas
 
-### Impact Breakdown by Input Size
+### Impact Drivers
 
-The cost increases are primarily driven by the minimum gas increase (200→500) for small operations and the iteration count multiplier change for large exponents.
+Cost increases driven by:
+- **Minimum gas increase** (200→500) for small operations
+- **Iteration multiplier change** (8×→16×) for large exponents
+- **Simplified complexity** for predictable costs
 
-"""
-
-    # Analysis scope and methodology
-    if stats:
-        block_range = stats.get('block_range', 'N/A')
-        if isinstance(block_range, str) and 'np.int64' in block_range:
-            # Parse the numpy format
-            import re
-            matches = re.findall(r'np\.int64\((\d+)\)', block_range)
-            if len(matches) == 2:
-                block_range = f"{matches[0]} to {matches[1]}"
-        
-        report += f"""
 ## Analysis Methodology
 
-### Data Scope
-- **Block range**: {block_range}
-- **Total calls analyzed**: {stats.get('total_calls', 'N/A'):,}
+### Data Scope"""
+
+    # Add block range info with enhanced formatting
+    block_range = summary_stats.get('block_range', 'N/A')
+    block_range_display = block_range
+    block_span = "Unknown"
+    
+    if isinstance(block_range, str) and 'np.int64' in block_range:
+        import re
+        matches = re.findall(r'np\.int64\((\d+)\)', block_range)
+        if len(matches) == 2:
+            start_block = int(matches[0])
+            end_block = int(matches[1])
+            block_span = f"{end_block - start_block + 1:,} blocks"
+            block_range_display = f"{start_block:,} to {end_block:,}"
+    elif isinstance(block_range, str) and '(' in block_range:
+        # Handle tuple format like "(21659928, 22785670)"
+        import re
+        matches = re.findall(r'\((\d+),\s*(\d+)\)', block_range)
+        if matches:
+            start_block = int(matches[0][0])
+            end_block = int(matches[0][1])
+            block_span = f"{end_block - start_block + 1:,} blocks"
+            block_range_display = f"{start_block:,} to {end_block:,}"
+
+    report += f"""
+- **Block range**: {block_range_display} ({block_span})
+- **Total calls analyzed**: {format_number(summary_stats.get('total_calls', 'N/A'))}
 - **Data source**: Ethereum mainnet ModExp precompile calls
 - **Analysis date**: {datetime.now().strftime('%Y-%m-%d')}
 
-### Calculation Methods
-- Gas costs calculated using both current EIP-2565 and proposed EIP-7883 formulas
-- All increases represent the additional gas that would be required under EIP-7883
-- Percentile analysis excludes calls with no cost increase (where EIP-7883 cost equals current cost)
+### Methods
+- Gas costs calculated using EIP-2565 and EIP-7883 formulas
+- Increases represent additional gas required under EIP-7883
+- Entity analysis groups by senders and contracts
+- Percentiles exclude zero-increase calls
 
-"""
-
-    # Conclusions
-    report += f"""
 ## Conclusions and Implications
 
-### Network Impact Assessment
+### Impact Assessment
 
-1. **Limited Scope**: Only {stats.get('pct_calls_affected', 0):.1f}% of ModExp calls experience cost increases, indicating EIP-7883's targeted approach.
-
-2. **Predictable Costs**: The cost increases follow predictable patterns based on input sizes, allowing users to estimate impacts.
-
-3. **Security Enhancement**: The minimum cost increase (200→500 gas) provides better protection against potential DoS attacks while having minimal impact on legitimate usage.
-
-4. **Large Operation Impact**: Operations with large exponents see the most significant cost increases due to the iteration multiplier change (8×→16×).
+1. **Limited scope**: Only {summary_stats.get('pct_calls_affected', 0):.1f}% of calls affected
+2. **Predictable costs**: Impact follows input size patterns
+3. **Entity concentration**: Impact focused on small number of addresses
+4. **Security improvement**: DoS protection with minimal legitimate impact
 
 ### Recommendations
 
-#### For Dapp Developers
-- Review any ModExp usage in your contracts, particularly operations with large exponents
-- Budget for potential 2.5× cost increases for operations currently at the 200 gas minimum
-- Consider optimizing exponent sizes where possible
+#### For Affected Entities
+- Review ModExp usage patterns and budget for increased costs
+- Large exponent operations see significant increases
+- Optimize exponent sizes where possible
 
-#### For Infrastructure Providers  
-- Update gas estimation tools to account for EIP-7883 changes
-- Monitor ModExp usage patterns to validate impact estimates post-implementation
+#### For Infrastructure
+- Update gas estimation tools for EIP-7883
+- Monitor post-implementation usage patterns
+- Guide users, especially top-impacted entities
 
-#### for the Ethereum Community
-- The analysis supports EIP-7883's goal of fixing underpriced edge cases while maintaining reasonable costs for common usage patterns
-- The targeted nature of the changes minimizes ecosystem disruption while improving security
+#### For Ethereum Community
+- Targeted fixes for underpriced edge cases
+- Concentrated impact enables focused outreach
+- Predictable changes allow effective planning
 
-### Data Quality Notes
+### Data Notes
 
-This analysis is based on historical mainnet data and provides empirical evidence of EIP-7883's impact. The relatively small sample size ({stats.get('total_calls', 'N/A')} calls) reflects the specialized nature of the ModExp precompile, which is primarily used by cryptographic applications and zero-knowledge proof systems.
+Analysis based on historical mainnet data ({format_number(summary_stats.get('total_calls', 'N/A'))} calls). ModExp precompile primarily used by cryptographic applications and ZK proof systems.
 
 ---
 
 *Report generated using historical Ethereum mainnet data. Gas calculations verified against EIP-2565 and EIP-7883 specifications.*
 """
 
-    # Write report
+    # Write the final report
     with open(output_file, 'w') as f:
         f.write(report)
     
@@ -356,7 +323,7 @@ This analysis is based on historical mainnet data and provides empirical evidenc
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate markdown report from EIP-7883 analysis outputs")
+    parser = argparse.ArgumentParser(description="Generate comprehensive markdown report from EIP-7883 analysis outputs")
     parser.add_argument("--analysis-dir", type=str, default="analysis_output", 
                        help="Directory containing analysis output files")
     parser.add_argument("--output", type=str, default="eip7883_comprehensive_analysis.md",
@@ -364,16 +331,13 @@ def main():
     
     args = parser.parse_args()
     
-    # Load analysis data
-    print(f"Loading analysis data from {args.analysis_dir}")
-    data = load_analysis_data(args.analysis_dir)
-    
-    if not data:
-        print("ERROR: No analysis data found")
+    analysis_dir = Path(args.analysis_dir)
+    if not analysis_dir.exists():
+        print(f"ERROR: Analysis directory {analysis_dir} does not exist")
         return
     
-    # Generate report
-    generate_markdown_report(data, args.output)
+    print(f"Loading analysis data from {analysis_dir}")
+    generate_comprehensive_report(analysis_dir, args.output)
 
 
 if __name__ == "__main__":
