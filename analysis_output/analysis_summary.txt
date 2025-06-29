@@ -1,12 +1,12 @@
 EIP-7883 ModExp Analysis Summary
 ========================================
 
-Analysis completed: 2025-06-29 16:32:47
-Total processing time: 639.1 seconds
+Analysis completed: 2025-06-29 16:49:58
+Total processing time: 496.4 seconds
 
 Performance:
-  Data loading: 56.4s
-  Transaction enrichment: 582.3s
+  Data loading: 59.3s
+  Transaction enrichment: 436.7s
   Analysis: 0.1s
 
 Results:
@@ -20,51 +20,3 @@ Results:
   calls_with_increase: 117023
   pct_calls_affected: 38.45633106693701
   calls_over_32_bytes: {'base': 76, 'exponent': 0, 'modulus': 76}
-  top_impacted_senders:                                             total_increase  ...  total_new_cost
-from_address                                                ...                
-0xaaf7b278bac078aa4f9bdc8e0a93cde604aa67d9         1797600  ...         5706141
-0x54ab716d465be3d5eeca64e63ac0048d7a81659a         1661400  ...         5334798
-0x000000629fbcf27a347d1aeba658435230d74a5f         1406700  ...         8669961
-0xf3b07f6744e06cd5074b7d15ed2c33760837ce1f          745800  ...         2392348
-0xfcb73f6405f6b9be91013d9477d81833a69c9c0d          621900  ...         3832977
-0x58d14960e0a2be353edde61ad719196a2b816522          345600  ...         1141231
-0x2b711ee00b50d67667c4439c28aeaf7b75cb6e0d          248400  ...          786324
-0x3527439923a63f8c13cf72b8fe80a77f6e572092          243600  ...          812049
-0xc2adcfccee33a417064d1a45d3b202de6d9fa474          123300  ...          759939
-0x9c0b0dbbae8a976ceea8c2a96f6d00c53839afdc          112500  ...          693375
-0x94a365ca808029af8db18257ecd296c16c61ac05           75600  ...          653346
-0xad0a80a085095eca46de3053c345516f1c722d2a           64800  ...          233457
-0x52ff08f313a00a54e3beffb5c4a7f7446efb6754           57600  ...          355008
-0x01c3a1a6890a146ac187a019f9863b3ab2bff91e           49200  ...          137309
-0x2572835e02b59078711aa0800490e80975e4169d           37800  ...          119658
-0x59b84b24e307682df830b32ddc826fbbe003c210           32400  ...          102564
-0x0f9b807d5b0ce12450059b425dc35c727d65cb2f           30600  ...           96866
-0x415ed64d42bc0c37aeaaef79aa767d963ef38807           21000  ...          176645
-0xe51d0862078098c84346b6203b50b996f7dafe28           17748  ...           35496
-0x63023d171098efbc9e7805fa85310b7078902912           17748  ...           35496
-
-[20 rows x 5 columns]
-  top_impacted_contracts:                                             total_increase  ...  unique_users
-to_address                                                  ...              
-0x8c0bfc04ada21fd496c55b8c50331f904306f564         2993400  ...            17
-0x5d8ba173dc6c3c90c8f7c04c9288bef5fdbad06e         2286000  ...             9
-0x68d30f47f19c07bccef4ac7fae2dc12fca3e0dc9         1406700  ...             1
-0x3b4d794a66304f130a4db8f2551b0070dfcf5ca7          621900  ...             1
-0x02993cdc11213985b9b13224f3af289f03bf298d          123300  ...             1
-0x7cf3876f681dbb6eda8f6ffc45d66b996df08fae          112500  ...             1
-0xece9cf6a8f2768a3b8b65060925b646afeaa5167           75600  ...             1
-0xd19d4b5d358258f05d7b411e21a1460d11b0876f           57600  ...             1
-0xabea9132b05a70803a4e85094fd0e1800777fbef           49200  ...             1
-0xb32cb5677a7c971689228ec835800432b339ba2b           35496  ...             2
-0x30efaaa99f8efe310d9fdc83072e2a04c093d400           14100  ...             1
-0xd1ce90003a10e6dab877890ab1fd96511555e4b3           10920  ...             1
-0xb45440830bd8d288bb2b5b01be303ae60fc855d8           10800  ...             1
-0xfeda03b91514d31b435d4e1519fd9e699c29bbfc            3300  ...             4
-0x2f3c205613d9451f88e19e011ed23775afe00c41            2700  ...             1
-0x38de07d2526ae929f1903e5f109b70c50e12a8e0            1800  ...             1
-0xd18d17791f2071bf3c855ba770420a9edea0728d            1200  ...             4
-0x2eb474cffabca358d9fd3f1d43ad2b2dfb809b0e             300  ...             1
-0x271682deb8c4e0901d1a1550ad2e64d568e69909               0  ...             3
-0x2d5805a423d6ce771f06972ad4499f120902631a               0  ...             2
-
-[20 rows x 6 columns]

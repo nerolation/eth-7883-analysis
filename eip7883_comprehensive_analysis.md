@@ -1,6 +1,6 @@
 # EIP-7883 ModExp Precompile Analysis Report
 
-*Generated on 2025-06-29 14:26:47*
+*Generated on 2025-06-29 16:51:03*
 
 ## Executive Summary
 
@@ -17,69 +17,6 @@ This report provides a comprehensive analysis of the impact of EIP-7883 on the M
 
 ## ModExp Usage Patterns
 
-### Input Size Distribution
-
-The ModExp precompile is used with the following input size patterns:
-
-**Base (B) sizes:**
-- Mean: 32.0 bytes
-- Median: 32 bytes  
-- Max: 32 bytes
-
-**Exponent (E) sizes:**
-- Mean: 32.0 bytes
-- Median: 32 bytes
-- Max: 32 bytes
-
-**Modulus (M) sizes:**
-- Mean: 32.0 bytes  
-- Median: 32 bytes
-- Max: 32 bytes
-
-### Common Usage Patterns
-
-- **Standard 32-byte inputs**: 490 calls (100.0%)
-- **Large exponents (>32 bytes)**: 0 calls  
-- **Large modulus (>32 bytes)**: 0 calls
-- **Large base (>32 bytes)**: 0 calls
-
-### Gas Cost Patterns  
-
-- **Minimum cost**: 200 gas
-- **Maximum cost**: 1,360 gas
-- **Most common cost**: 1,349 gas
-
-**Top 5 most common gas costs:**
-- 1,349 gas: 201 calls (41.0%)
-- 200 gas: 161 calls (32.9%)
-- 1,360 gas: 96 calls (19.6%)
-- 1,338 gas: 32 calls (6.5%)
-
-### Transaction Usage Patterns
-
-- **Average calls per transaction**: 4.0
-- **Maximum calls in single transaction**: 6
-- **Transactions with multiple ModExp calls**: 112
-
-## EIP-7883 Cost Impact Analysis
-
-### Cost Increase Distribution
-
-**Gas cost increase percentiles (for affected calls only):**
-- 10th percentile: 300 gas
-- 25th percentile: 300 gas  
-- 50th percentile (median): 300 gas
-- 75th percentile: 300 gas
-- 90th percentile: 300 gas
-- 95th percentile: 300 gas
-- 99th percentile: 300 gas
-
-**Cost ratio percentiles (EIP-7883 cost / current cost):**
-- 50th percentile: 2.50x
-- 75th percentile: 2.50x
-- 90th percentile: 2.50x
-- 95th percentile: 2.50x
-- 99th percentile: 2.50x
 
 ## Most Impacted Entities
 
