@@ -114,20 +114,51 @@ def main():
             if key != "top_impacted_addresses":
                 f.write(f"  {key}: {value}\n")
     
-    # Save top impacted addresses if available
-    if "top_impacted_addresses" in results and results["top_impacted_addresses"] is not None:
-        results["top_impacted_addresses"].to_csv(output_path / "top_impacted_addresses.csv")
+    # Save entity analysis results if available
+    if "top_impacted_senders" in results and results["top_impacted_senders"] is not None:
+        results["top_impacted_senders"].to_csv(output_path / "top_impacted_senders.csv")
+        
+    if "top_impacted_contracts" in results and results["top_impacted_contracts"] is not None:
+        results["top_impacted_contracts"].to_csv(output_path / "top_impacted_contracts.csv")
+    
+    # Perform enhanced entity analysis if transaction data available
+    try:
+        entity_results = analyzer.analyze_entities()
+        if entity_results:
+            print("Enhanced entity analysis completed")
+            
+            # Save detailed entity analysis
+            if "sender_analysis" in entity_results:
+                entity_results["sender_analysis"].to_csv(output_path / "detailed_sender_analysis.csv")
+                print(f"- detailed_sender_analysis.csv")
+                
+            if "contract_analysis" in entity_results:
+                entity_results["contract_analysis"].to_csv(output_path / "detailed_contract_analysis.csv") 
+                print(f"- detailed_contract_analysis.csv")
+                
+            if "entity_patterns" in entity_results:
+                patterns = entity_results["entity_patterns"]
+                if "top_sender_contract_pairs" in patterns:
+                    patterns["top_sender_contract_pairs"].to_csv(output_path / "sender_contract_pairs.csv")
+                    print(f"- sender_contract_pairs.csv")
+    except Exception as e:
+        print(f"Enhanced entity analysis failed: {e}")
     
     export_time = time.time() - export_start
     total_time = time.time() - start_time
     
     print(f"Export completed in {export_time:.1f} seconds")
     print(f"\nTotal analysis time: {total_time:.1f} seconds")
-    print(f"Results saved to {args.output_dir}/")
+    print(f"Results saved to {args.output_dir}/:")
     print(f"- modexp_analysis_data.parquet (compressed)")
     if len(analyzer.df) < 100000:
         print(f"- modexp_analysis_data.csv (readable)")
     print(f"- analysis_summary.txt (summary)")
+    
+    if "top_impacted_senders" in results:
+        print(f"- top_impacted_senders.csv (sender analysis)")
+    if "top_impacted_contracts" in results:
+        print(f"- top_impacted_contracts.csv (contract analysis)")
     
 
 if __name__ == "__main__":

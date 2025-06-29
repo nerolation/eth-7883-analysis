@@ -211,20 +211,135 @@ class ModExpDataAnalyzer:
             "modulus": len(self.df[self.df["Msize"] > 32])
         }
         
-        # Address analysis if transaction data available
+        # Enhanced address analysis if transaction data available
         if "from_address" in self.df.columns:
-            address_impact = self.df.groupby("from_address").agg({
+            # Analysis by sender (from_address)
+            sender_impact = self.df.groupby("from_address").agg({
                 "cost_increase": ["sum", "mean", "count"],
                 "gas_costs": "sum",
                 "eip7883_cost": "sum"
             }).round(2)
             
-            address_impact.columns = ["total_increase", "avg_increase", "call_count", 
-                                     "total_old_cost", "total_new_cost"]
-            address_impact = address_impact.sort_values("total_increase", ascending=False)
-            results["top_impacted_addresses"] = address_impact.head(20)
+            sender_impact.columns = ["total_increase", "avg_increase", "call_count", 
+                                   "total_old_cost", "total_new_cost"]
+            sender_impact = sender_impact.sort_values("total_increase", ascending=False)
+            results["top_impacted_senders"] = sender_impact.head(20)
+            
+        if "to_address" in self.df.columns:
+            # Analysis by contract (to_address)
+            contract_impact = self.df.groupby("to_address").agg({
+                "cost_increase": ["sum", "mean", "count"],
+                "gas_costs": "sum", 
+                "eip7883_cost": "sum",
+                "from_address": "nunique"  # Number of unique users
+            }).round(2)
+            
+            contract_impact.columns = ["total_increase", "avg_increase", "call_count",
+                                     "total_old_cost", "total_new_cost", "unique_users"]
+            contract_impact = contract_impact.sort_values("total_increase", ascending=False)
+            results["top_impacted_contracts"] = contract_impact.head(20)
             
         return results
+    
+    def analyze_entities(self) -> dict:
+        """Comprehensive entity analysis by sender and contract"""
+        entity_results = {}
+        
+        if "from_address" not in self.df.columns or "to_address" not in self.df.columns:
+            print("Transaction data not available for entity analysis")
+            return entity_results
+            
+        print("Performing comprehensive entity analysis...")
+        
+        # 1. Sender Analysis (Transaction originators)
+        sender_analysis = self.df.groupby("from_address").agg({
+            "cost_increase": ["sum", "mean", "count", "std"],
+            "gas_costs": ["sum", "mean"],
+            "eip7883_cost": ["sum", "mean"],
+            "to_address": "nunique",  # Number of different contracts called
+            "tx_hash": "nunique",     # Number of transactions
+            "block_number": ["min", "max", "nunique"],
+            "Bsize": ["mean", "max"],
+            "Esize": ["mean", "max"],
+            "Msize": ["mean", "max"]
+        }).round(2)
+        
+        # Flatten column names
+        sender_analysis.columns = [
+            "total_increase", "avg_increase", "call_count", "std_increase",
+            "total_gas_current", "avg_gas_current", "total_gas_new", "avg_gas_new",
+            "unique_contracts", "unique_transactions", 
+            "first_block", "last_block", "active_blocks",
+            "avg_base_size", "max_base_size", "avg_exp_size", "max_exp_size",
+            "avg_mod_size", "max_mod_size"
+        ]
+        
+        # Calculate additional metrics
+        sender_analysis["cost_ratio"] = sender_analysis["total_gas_new"] / sender_analysis["total_gas_current"]
+        sender_analysis["activity_span"] = sender_analysis["last_block"] - sender_analysis["first_block"]
+        sender_analysis["avg_calls_per_block"] = sender_analysis["call_count"] / (sender_analysis["activity_span"] + 1)
+        
+        entity_results["sender_analysis"] = sender_analysis.sort_values("total_increase", ascending=False)
+        
+        # 2. Contract Analysis (Called contracts)  
+        contract_analysis = self.df.groupby("to_address").agg({
+            "cost_increase": ["sum", "mean", "count", "std"],
+            "gas_costs": ["sum", "mean"],
+            "eip7883_cost": ["sum", "mean"],
+            "from_address": "nunique",  # Number of different users
+            "tx_hash": "nunique",       # Number of transactions
+            "block_number": ["min", "max", "nunique"],
+            "Bsize": ["mean", "max"],
+            "Esize": ["mean", "max"], 
+            "Msize": ["mean", "max"]
+        }).round(2)
+        
+        # Flatten column names
+        contract_analysis.columns = [
+            "total_increase", "avg_increase", "call_count", "std_increase",
+            "total_gas_current", "avg_gas_current", "total_gas_new", "avg_gas_new",
+            "unique_users", "unique_transactions",
+            "first_block", "last_block", "active_blocks", 
+            "avg_base_size", "max_base_size", "avg_exp_size", "max_exp_size",
+            "avg_mod_size", "max_mod_size"
+        ]
+        
+        # Calculate additional metrics
+        contract_analysis["cost_ratio"] = contract_analysis["total_gas_new"] / contract_analysis["total_gas_current"]
+        contract_analysis["activity_span"] = contract_analysis["last_block"] - contract_analysis["first_block"]
+        contract_analysis["avg_calls_per_block"] = contract_analysis["call_count"] / (contract_analysis["activity_span"] + 1)
+        
+        entity_results["contract_analysis"] = contract_analysis.sort_values("total_increase", ascending=False)
+        
+        # 3. Cross-entity patterns
+        entity_results["entity_patterns"] = self._analyze_entity_patterns()
+        
+        return entity_results
+    
+    def _analyze_entity_patterns(self) -> dict:
+        """Analyze patterns between senders and contracts"""
+        patterns = {}
+        
+        # Most active sender-contract pairs
+        pair_analysis = self.df.groupby(["from_address", "to_address"]).agg({
+            "cost_increase": ["sum", "count"],
+            "gas_costs": "sum",
+            "eip7883_cost": "sum"
+        }).round(2)
+        
+        pair_analysis.columns = ["total_increase", "call_count", "total_gas_current", "total_gas_new"]
+        pair_analysis["cost_ratio"] = pair_analysis["total_gas_new"] / pair_analysis["total_gas_current"]
+        patterns["top_sender_contract_pairs"] = pair_analysis.sort_values("total_increase", ascending=False).head(20)
+        
+        # Contract usage diversity
+        contract_diversity = self.df.groupby("to_address")["from_address"].nunique().sort_values(ascending=False)
+        patterns["most_diverse_contracts"] = contract_diversity.head(10)
+        
+        # Sender contract usage
+        sender_diversity = self.df.groupby("from_address")["to_address"].nunique().sort_values(ascending=False)
+        patterns["most_diverse_senders"] = sender_diversity.head(10)
+        
+        return patterns
     
     def create_visualizations(self, output_dir: str = "output"):
         """Create analysis visualizations"""
@@ -291,15 +406,65 @@ class ModExpDataAnalyzer:
             )
             fig.write_html(output_path / "cost_timeline.html")
             
-        # 4. Address impact (if available)
-        if "from_address" in self.df.columns:
-            address_stats = self.df.groupby("from_address").agg({
+        # 4. Entity impact visualizations (if available)
+        if "from_address" in self.df.columns and "to_address" in self.df.columns:
+            # Sender impact
+            sender_stats = self.df.groupby("from_address").agg({
                 "cost_increase": "sum",
                 "tx_hash": "count"
             }).sort_values("cost_increase", ascending=False).head(20)
             
             fig = px.bar(
-                address_stats.reset_index(),
+                sender_stats.reset_index(),
+                x="from_address",
+                y="cost_increase",
+                title="Top 20 Transaction Senders by Total Cost Increase",
+                labels={"cost_increase": "Total Cost Increase", "from_address": "Sender Address"}
+            )
+            fig.update_xaxes(tickangle=45)
+            fig.write_html(output_path / "sender_impact.html")
+            
+            # Contract impact  
+            contract_stats = self.df.groupby("to_address").agg({
+                "cost_increase": "sum",
+                "tx_hash": "count",
+                "from_address": "nunique"
+            }).sort_values("cost_increase", ascending=False).head(20)
+            
+            fig = px.bar(
+                contract_stats.reset_index(),
+                x="to_address",
+                y="cost_increase",
+                title="Top 20 Contracts by Total Cost Increase",
+                labels={"cost_increase": "Total Cost Increase", "to_address": "Contract Address"},
+                hover_data=["from_address"]
+            )
+            fig.update_xaxes(tickangle=45)
+            fig.write_html(output_path / "contract_impact.html")
+            
+            # Sender vs Contract comparison
+            sender_total = self.df.groupby("from_address")["cost_increase"].sum()
+            contract_total = self.df.groupby("to_address")["cost_increase"].sum()
+            
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=sender_total, name="Senders", opacity=0.7, nbinsx=50))
+            fig.add_trace(go.Histogram(x=contract_total, name="Contracts", opacity=0.7, nbinsx=50))
+            fig.update_layout(
+                title="Distribution of Cost Increases: Senders vs Contracts",
+                xaxis_title="Total Cost Increase (gas)",
+                yaxis_title="Count",
+                barmode="overlay"
+            )
+            fig.write_html(output_path / "sender_vs_contract_distribution.html")
+        elif "from_address" in self.df.columns:
+            # Fallback to sender-only analysis
+            sender_stats = self.df.groupby("from_address").agg({
+                "cost_increase": "sum",
+                "tx_hash": "count"
+            }).sort_values("cost_increase", ascending=False).head(20)
+            
+            fig = px.bar(
+                sender_stats.reset_index(),
                 x="from_address",
                 y="cost_increase",
                 title="Top 20 Addresses by Total Cost Increase",
@@ -354,14 +519,26 @@ Based on the analyzed data:
 
 """
 
-    if "top_impacted_addresses" in results:
-        report += """### 4. Most Impacted Addresses
+    # Add entity analysis sections
+    if "top_impacted_senders" in results:
+        report += """### 4. Most Impacted Transaction Senders
 
-| Address | Total Increase | Avg Increase | Call Count |
-|---------|---------------|--------------|------------|
+| Sender Address | Total Increase | Avg Increase | Call Count |
+|----------------|---------------|--------------|------------|
 """
-        for addr, row in results["top_impacted_addresses"].head(10).iterrows():
+        for addr, row in results["top_impacted_senders"].head(10).iterrows():
             report += f"| `{addr[:10]}...` | {row['total_increase']:,.0f} | {row['avg_increase']:,.0f} | {row['call_count']:,} |\n"
+
+    if "top_impacted_contracts" in results:
+        report += """
+
+### 5. Most Impacted Contracts
+
+| Contract Address | Total Increase | Avg Increase | Call Count | Unique Users |
+|------------------|---------------|--------------|------------|--------------|
+"""
+        for addr, row in results["top_impacted_contracts"].head(10).iterrows():
+            report += f"| `{addr[:10]}...` | {row['total_increase']:,.0f} | {row['avg_increase']:,.0f} | {row['call_count']:,} | {row['unique_users']:,} |\n"
 
     report += """
 ## Conclusions
