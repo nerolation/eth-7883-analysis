@@ -1,0 +1,6 @@
+entity_type,entity_count,total_daily_calls,total_monthly_current,total_monthly_eip7883,total_monthly_increase,avg_cost_ratio,pct_increase
+Enterprise,10,3800,56623.87,177759.75,121135.88,5.6,213.93076806654153
+High Complexity,8,155,2168.18,7024.37,4856.18,5.75,223.9749467295151
+DeFi Protocol,20,3600,2334.15,5298.3,2964.15,2.3,126.99055330634278
+Medium Complexity,25,350,239.27,1701.79,1462.52,6.66,611.242529360137
+Regular User,80,700,367.5,918.75,551.25,2.5,150.0

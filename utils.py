@@ -15,7 +15,8 @@ def enrich_with_transaction_data(
     modexp_df: pd.DataFrame,
     xatu_client: Optional[pyxatu.PyXatu] = None,
     batch_size: int = 1000,
-    max_blocks: Optional[int] = None
+    max_blocks: Optional[int] = None,
+    strategy: str = "block_range"  # "block_range", "tx_hash", or "hybrid"
 ) -> pd.DataFrame:
     """Enrich ModExp data with transaction metadata from Xatu - optimized for efficiency"""
     
@@ -39,102 +40,191 @@ def enrich_with_transaction_data(
     print(f"Querying transaction data for blocks {min_block:,} to {max_block:,}")
     print(f"Block range spans {max_block - min_block + 1:,} blocks ({len(modexp_blocks):,} with ModExp calls)")
     
-    # Use targeted query with transaction hash filter for efficiency
-    query_template = """
-    SELECT 
-        block_number, 
-        transaction_hash as tx_hash, 
-        from_address, 
-        to_address, 
-        value, 
-        gas_used, 
-        gas_price, 
-        transaction_type 
-    FROM canonical_execution_transaction
-    WHERE meta_network_name = 'mainnet' 
-        AND block_number >= {} 
-        AND block_number <= {}
-        AND transaction_hash IN ({})
-    """
+    # Choose query strategy based on data density
+    block_span = max_block - min_block + 1
+    tx_density = len(modexp_txs) / block_span
+    
+    print(f"Transaction density: {tx_density:.2f} ModExp txs per block")
+    
+    # Auto-select strategy if not specified
+    if strategy == "hybrid":
+        if tx_density > 0.1:  # High density - use block range query
+            strategy = "block_range"
+        else:  # Low density - use transaction hash query
+            strategy = "tx_hash"
+        print(f"Auto-selected strategy: {strategy}")
+    
+    if strategy == "block_range":
+        # Strategy 1: Query all transactions in block range, filter afterwards
+        query_template = """
+        SELECT 
+            block_number, 
+            transaction_hash as tx_hash, 
+            from_address, 
+            to_address, 
+            value, 
+            gas_used, 
+            gas_price, 
+            transaction_type 
+        FROM canonical_execution_transaction
+        WHERE meta_network_name = 'mainnet' 
+            AND block_number >= {} 
+            AND block_number <= {}
+        """
+    else:
+        # Strategy 2: Original transaction hash filtering
+        query_template = """
+        SELECT 
+            block_number, 
+            transaction_hash as tx_hash, 
+            from_address, 
+            to_address, 
+            value, 
+            gas_used, 
+            gas_price, 
+            transaction_type 
+        FROM canonical_execution_transaction
+        WHERE meta_network_name = 'mainnet' 
+            AND block_number >= {} 
+            AND block_number <= {}
+            AND transaction_hash IN ({})
+        """
     
     tx_results = []
     
-    # Convert transaction hashes to list and batch them
-    modexp_tx_list = list(modexp_txs)
-    tx_batch_size = min(batch_size, 50)  # Start with conservative batch size
-    
-    print(f"Processing {len(modexp_tx_list):,} transactions in batches of {tx_batch_size}")
-    
-    i = 0
-    while i < len(modexp_tx_list):
-        batch_txs = modexp_tx_list[i:i + tx_batch_size]
-        tx_hash_list = "'" + "','".join(batch_txs) + "'"
+    if strategy == "block_range":
+        # Strategy 1: Query entire block range, then filter
+        print(f"Using block range strategy for {block_span:,} blocks")
         
-        print(f"Querying batch {i//tx_batch_size + 1}: {len(batch_txs)} transactions")
+        # Process in smaller block chunks to avoid memory issues
+        block_chunk_size = min(1000, block_span)  # Process up to 1000 blocks at a time
         
-        query = query_template.format(min_block, max_block, tx_hash_list)
-        
-        try:
-            result = xatu_client.execute_query(
-                query,
-                columns="block_number, tx_hash, from_address, to_address, value, gas_used, gas_price, transaction_type"
-            )
+        for chunk_start in range(0, len(modexp_blocks), block_chunk_size):
+            chunk_blocks = modexp_blocks[chunk_start:chunk_start + block_chunk_size]
+            chunk_min = min(chunk_blocks)
+            chunk_max = max(chunk_blocks)
             
-            if len(result) > 0:
-                # Ensure we only get the transactions we asked for
-                result = result[result["tx_hash"].isin(batch_txs)]
-                tx_results.append(result)
-                print(f"  Found {len(result)} matching transactions")
-            else:
-                print(f"  No transactions found for this batch")
+            print(f"Querying block chunk {chunk_min:,} to {chunk_max:,} ({len(chunk_blocks):,} blocks)")
             
-            # Move to next batch
-            i += tx_batch_size
+            query = query_template.format(chunk_min, chunk_max)
+            
+            try:
+                result = xatu_client.execute_query(
+                    query,
+                    columns="block_number, tx_hash, from_address, to_address, value, gas_used, gas_price, transaction_type"
+                )
                 
-        except Exception as e:
-            error_str = str(e).lower()
-            if "414" in error_str or "request-uri too large" in error_str or "url too long" in error_str:
-                # URL too long - reduce batch size and retry
-                if tx_batch_size > 1:
-                    tx_batch_size = max(1, tx_batch_size // 2)
-                    print(f"  URL too long, reducing batch size to {tx_batch_size} and retrying...")
-                    continue  # Retry same batch with smaller size
+                if len(result) > 0:
+                    # Filter to only ModExp transactions
+                    result = result[result["tx_hash"].isin(modexp_txs)]
+                    if len(result) > 0:
+                        tx_results.append(result)
+                        print(f"  Found {len(result)} ModExp transactions")
+                    else:
+                        print(f"  No ModExp transactions found in this chunk")
                 else:
-                    print(f"  Cannot reduce batch size further, skipping this transaction")
-                    i += 1
-            else:
-                print(f"Error querying transaction batch: {e}")
-                # Try fallback query for individual transactions in this batch
-                fallback_results = []
-                for tx in batch_txs:
+                    print(f"  No transactions found for this chunk")
+                    
+            except Exception as e:
+                print(f"Error querying block chunk {chunk_min}-{chunk_max}: {e}")
+                # Fall back to transaction hash strategy for this chunk
+                chunk_txs = modexp_df[modexp_df["block_number"].isin(chunk_blocks)]["tx_hash"].unique()
+                print(f"  Falling back to tx hash strategy for {len(chunk_txs)} transactions")
+                
+                # Use original tx hash batching for this chunk
+                tx_batch_size = min(50, len(chunk_txs))
+                for i in range(0, len(chunk_txs), tx_batch_size):
+                    batch_txs = chunk_txs[i:i + tx_batch_size]
+                    tx_hash_list = "'" + "','".join(batch_txs) + "'"
+                    fallback_query = query_template.replace(
+                        "AND block_number <= {}", 
+                        "AND block_number <= {} AND transaction_hash IN ({})"
+                    ).format(chunk_min, chunk_max, tx_hash_list)
+                    
                     try:
-                        fallback_query = f"""
-                        SELECT 
-                            block_number, 
-                            transaction_hash as tx_hash, 
-                            from_address, 
-                            to_address, 
-                            value, 
-                            gas_used, 
-                            gas_price, 
-                            transaction_type 
-                        FROM canonical_execution_transaction
-                        WHERE meta_network_name = 'mainnet' 
-                            AND transaction_hash = '{tx}'
-                        """
                         result = xatu_client.execute_query(fallback_query)
                         if len(result) > 0:
-                            fallback_results.append(result)
+                            tx_results.append(result)
                     except Exception as e2:
-                        print(f"  Fallback query failed for {tx[:10]}...: {e2}")
+                        print(f"    Fallback batch failed: {e2}")
+    
+    else:
+        # Strategy 2: Original transaction hash filtering
+        modexp_tx_list = list(modexp_txs)
+        tx_batch_size = min(batch_size, 50)  # Start with conservative batch size
+        
+        print(f"Using transaction hash strategy for {len(modexp_tx_list):,} transactions in batches of {tx_batch_size}")
+        
+        i = 0
+        while i < len(modexp_tx_list):
+            batch_txs = modexp_tx_list[i:i + tx_batch_size]
+            tx_hash_list = "'" + "','".join(batch_txs) + "'"
+            
+            print(f"Querying batch {i//tx_batch_size + 1}: {len(batch_txs)} transactions")
+            
+            query = query_template.format(min_block, max_block, tx_hash_list)
+            
+            try:
+                result = xatu_client.execute_query(
+                    query,
+                    columns="block_number, tx_hash, from_address, to_address, value, gas_used, gas_price, transaction_type"
+                )
                 
-                if fallback_results:
-                    combined_result = pd.concat(fallback_results, ignore_index=True)
-                    tx_results.append(combined_result)
-                    print(f"  Fallback queries found {len(combined_result)} transactions")
+                if len(result) > 0:
+                    # Ensure we only get the transactions we asked for
+                    result = result[result["tx_hash"].isin(batch_txs)]
+                    tx_results.append(result)
+                    print(f"  Found {len(result)} matching transactions")
+                else:
+                    print(f"  No transactions found for this batch")
                 
                 # Move to next batch
                 i += tx_batch_size
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                if "414" in error_str or "request-uri too large" in error_str or "url too long" in error_str:
+                    # URL too long - reduce batch size and retry
+                    if tx_batch_size > 1:
+                        tx_batch_size = max(1, tx_batch_size // 2)
+                        print(f"  URL too long, reducing batch size to {tx_batch_size} and retrying...")
+                        continue  # Retry same batch with smaller size
+                    else:
+                        print(f"  Cannot reduce batch size further, skipping this transaction")
+                        i += 1
+                else:
+                    print(f"Error querying transaction batch: {e}")
+                    # Try fallback query for individual transactions in this batch
+                    fallback_results = []
+                    for tx in batch_txs:
+                        try:
+                            fallback_query = f"""
+                            SELECT 
+                                block_number, 
+                                transaction_hash as tx_hash, 
+                                from_address, 
+                                to_address, 
+                                value, 
+                                gas_used, 
+                                gas_price, 
+                                transaction_type 
+                            FROM canonical_execution_transaction
+                            WHERE meta_network_name = 'mainnet' 
+                                AND transaction_hash = '{tx}'
+                            """
+                            result = xatu_client.execute_query(fallback_query)
+                            if len(result) > 0:
+                                fallback_results.append(result)
+                        except Exception as e2:
+                            print(f"  Fallback query failed for {tx[:10]}...: {e2}")
+                    
+                    if fallback_results:
+                        combined_result = pd.concat(fallback_results, ignore_index=True)
+                        tx_results.append(combined_result)
+                        print(f"  Fallback queries found {len(combined_result)} transactions")
+                    
+                    # Move to next batch
+                    i += tx_batch_size
             
     if tx_results:
         tx_df = pd.concat(tx_results, ignore_index=True)
