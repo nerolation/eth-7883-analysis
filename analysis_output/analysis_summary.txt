@@ -1,22 +1,9 @@
-EIP-7883 ModExp Analysis Summary
-========================================
-
-Analysis completed: 2025-06-29 17:11:34
-Total processing time: 745.6 seconds
-
-Performance:
-  Data loading: 58.8s
-  Transaction enrichment: 686.5s
-  Analysis: 0.1s
-
-Results:
-  total_calls: 304301
-  unique_transactions: 75134
-  block_range: (21659928, 22785670)
-  avg_cost_increase: 116.03294435443853
-  median_cost_increase: 0.0
-  max_cost_increase: 12805
-  total_cost_increase: 35308941
-  calls_with_increase: 117023
-  pct_calls_affected: 38.45633106693701
-  calls_over_32_bytes: {'base': 76, 'exponent': 0, 'modulus': 76}
+total_calls: 304301
+unique_transactions: 75134
+calls_with_increase: 304301
+pct_calls_affected: 100.0
+total_cost_increase: 542947771
+avg_cost_increase: 1784.2457665272213
+median_cost_increase: 2699.0
+max_cost_increase: 64027
+block_range: 21659928-22785670
